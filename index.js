@@ -18,7 +18,7 @@ const app = express();
 // Security headers
 app.use(helmet());
 
-// CORS — locked to your domains
+// CORS
 const allowedOrigins = [
   'http://localhost:3000',
   'https://content-studio-client.vercel.app',
@@ -39,7 +39,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '10kb' }));
 
-// Sanitize all request inputs against NoSQL injection
+// Sanitize inputs
 app.use((req, res, next) => {
   req.body = mongoSanitize(req.body);
   req.query = mongoSanitize(req.query);
@@ -47,7 +47,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Global rate limit — 100 requests per 15 minutes per IP
+// Global rate limit
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -55,7 +55,7 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// Strict rate limit for auth — 10 attempts per 15 minutes
+// Auth rate limit
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -83,4 +83,16 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+
+  // Keep Render free tier awake — ping every 14 minutes
+  if (process.env.NODE_ENV === 'production' && process.env.RENDER_URL) {
+    setInterval(() => {
+      const https = require('https');
+      https.get(process.env.RENDER_URL, (res) => {
+        console.log('Keep-alive ping:', res.statusCode);
+      }).on('error', (e) => {
+        console.log('Keep-alive ping failed:', e.message);
+      });
+    }, 14 * 60 * 1000);
+  }
 });
