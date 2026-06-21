@@ -1,6 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('mongo-sanitize');
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const contentRoutes = require('./routes/contentRoutes');
@@ -12,18 +15,68 @@ require('./utils/queueProcessor');
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// Security headers
+app.use(helmet());
 
-app.use('/api/auth', authRoutes);
+// CORS — locked to your domains
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://content-studio-client.vercel.app',
+  'https://content-studio-client-git-main-rishabh2233engs-projects.vercel.app',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
+app.use(express.json({ limit: '10kb' }));
+
+// Sanitize all request inputs against NoSQL injection
+app.use((req, res, next) => {
+  req.body = mongoSanitize(req.body);
+  req.query = mongoSanitize(req.query);
+  req.params = mongoSanitize(req.params);
+  next();
+});
+
+// Global rate limit — 100 requests per 15 minutes per IP
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { success: false, message: 'Too many requests, please try again later.' }
+});
+app.use(globalLimiter);
+
+// Strict rate limit for auth — 10 attempts per 15 minutes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { success: false, message: 'Too many login attempts, please try again in 15 minutes.' }
+});
+
+// Routes
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/content', contentRoutes);
 app.use('/api/analytics', analyticsRoutes);
 
 app.get('/', (req, res) => {
-  res.json({
-    message: 'AI Content Studio API is live!',
-    version: '1.0.0',
-    status: 'running'
+  res.json({ message: 'AI Content Studio API is live!', version: '1.0.0', status: 'running' });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'Internal server error'
   });
 });
 

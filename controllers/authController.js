@@ -2,42 +2,55 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-// Generate JWT token
-const generateToken = (userId) => {
-  return jwt.sign(
-    { id: userId },
-    process.env.JWT_SECRET,
-    { expiresIn: '7d' }
-  );
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' });
 };
 
-// @route   POST /api/auth/register
-// @desc    Register a new user
+const validateEmail = (email) => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+};
+
+const validatePassword = (password) => {
+  return password && password.length >= 8;
+};
+
+// @route POST /api/auth/register
 const register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'User already exists with this email'
-      });
+    if (!name || !email || !password) {
+      return res.status(400).json({ success: false, message: 'All fields are required' });
     }
 
-    // Hash the password
-    const salt = await bcrypt.genSalt(10);
+    if (name.length < 2 || name.length > 50) {
+      return res.status(400).json({ success: false, message: 'Name must be between 2 and 50 characters' });
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
+    }
+
+    if (!validatePassword(password)) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    }
+
+    const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'An account with this email already exists' });
+    }
+
+    const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
     const user = await User.create({
-      name,
-      email,
-      password: hashedPassword
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      password: hashedPassword,
+      credits: 5,
+      plan: 'free'
     });
 
-    // Generate token
     const token = generateToken(user._id);
 
     res.status(201).json({
@@ -48,45 +61,42 @@ const register = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        plan: user.plan,
-        credits: user.credits
+        credits: user.credits,
+        plan: user.plan
       }
     });
 
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    console.error('Register error:', error.message);
+    res.status(500).json({ success: false, message: 'Server error during registration' });
   }
 };
 
-// @route   POST /api/auth/login
-// @desc    Login user
+// @route POST /api/auth/login
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check if user exists
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid email or password'
-      });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
-    // Check password
+    if (!validateEmail(email)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+
+    // Generic message to prevent user enumeration
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid email or password'
-      });
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
-    // Generate token
     const token = generateToken(user._id);
 
     res.status(200).json({
@@ -97,35 +107,27 @@ const login = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        plan: user.plan,
-        credits: user.credits
+        credits: user.credits,
+        plan: user.plan
       }
     });
 
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    console.error('Login error:', error.message);
+    res.status(500).json({ success: false, message: 'Server error during login' });
   }
 };
 
-// @route   GET /api/auth/me
-// @desc    Get current logged in user
+// @route GET /api/auth/me
 const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
-    res.status(200).json({
-      success: true,
-      user
-    });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.status(200).json({ success: true, user });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
