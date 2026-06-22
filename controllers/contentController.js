@@ -11,6 +11,9 @@ const generateContent = async (req, res) => {
     }
 
     const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
     if (user.credits <= 0) {
       return res.status(400).json({ success: false, message: 'No credits remaining. Please upgrade your plan.' });
     }
@@ -34,7 +37,7 @@ const generateContent = async (req, res) => {
       removeOnFail: false
     });
 
-    console.log('Job ' + job.id + ' added to queue for topic: ' + topic);
+    console.log('Job ' + job.id + ' added for topic: ' + topic);
 
     res.status(200).json({
       success: true,
@@ -44,7 +47,7 @@ const generateContent = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Queue error:', error.message);
+    console.error('Generate error:', error.message);
     res.status(500).json({ success: false, message: 'Failed to start generation', error: error.message });
   }
 };
@@ -61,11 +64,8 @@ const getJobStatus = async (req, res) => {
       if (content && content.status === 'completed') {
         const user = await User.findById(req.user.id);
         return res.status(200).json({
-          success: true,
-          status: 'completed',
-          progress: 100,
-          content,
-          creditsRemaining: user.credits
+          success: true, status: 'completed', progress: 100,
+          content, creditsRemaining: user.credits
         });
       }
       return res.status(200).json({ success: true, status: 'processing', progress: 50 });
@@ -78,17 +78,21 @@ const getJobStatus = async (req, res) => {
       const content = await Content.findById(contentId);
       const user = await User.findById(req.user.id);
       return res.status(200).json({
-        success: true, status: 'completed', progress: 100, content, creditsRemaining: user.credits
+        success: true, status: 'completed', progress: 100,
+        content, creditsRemaining: user.credits
       });
     }
 
     if (state === 'failed') {
-      return res.status(200).json({ success: true, status: 'failed', progress: 0, error: job.failedReason });
+      return res.status(200).json({
+        success: true, status: 'failed', progress: 0, error: job.failedReason
+      });
     }
 
     res.status(200).json({ success: true, status: state, progress: progress || 0 });
 
   } catch (error) {
+    console.error('Status error:', error.message);
     res.status(500).json({ success: false, message: 'Failed to get job status', error: error.message });
   }
 };
