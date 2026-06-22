@@ -9,7 +9,7 @@ const {
   generateEmailNewsletter
 } = require('./aiService');
 
-contentQueue.process(async (job) => {
+contentQueue.process(1, async (job) => {
   const { contentId, topic, tone, userId } = job.data;
   try {
     await job.progress(10);
