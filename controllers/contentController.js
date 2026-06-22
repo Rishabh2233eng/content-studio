@@ -25,18 +25,18 @@ const generateContent = async (req, res) => {
       status: 'generating'
     });
 
-    const job = await contentQueue.add({
-      contentId: content._id.toString(),
-      topic,
-      tone,
-      userId: req.user.id.toString()
-    }, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: true,
-      removeOnFail: false
-    });
-
+   const job = await contentQueue.add({
+  contentId: content._id.toString(),
+  topic,
+  tone,
+  userId: req.user.id.toString()
+}, {
+  attempts: 2,
+  backoff: { type: 'fixed', delay: 3000 },
+  removeOnComplete: true,
+  removeOnFail: false,
+  timeout: 180000
+});
     console.log('Job ' + job.id + ' added for topic: ' + topic);
 
     res.status(200).json({
