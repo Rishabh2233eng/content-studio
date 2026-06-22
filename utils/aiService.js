@@ -1,9 +1,11 @@
 const https = require('https');
 
-const generateWithOpenRouter = (prompt, model) => {
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+const generateWithAI = (prompt) => {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
-      model: model || 'meta-llama/llama-3.1-8b-instruct:free',
+      model: 'openrouter/auto',
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 800
     });
@@ -29,11 +31,11 @@ const generateWithOpenRouter = (prompt, model) => {
           console.log('OpenRouter status:', res.statusCode);
           const parsed = JSON.parse(body);
           if (parsed.error) {
-            reject(new Error(JSON.stringify(parsed.error)));
+            reject(new Error('OpenRouter error: ' + JSON.stringify(parsed.error)));
           } else if (parsed.choices && parsed.choices[0]) {
             resolve(parsed.choices[0].message.content);
           } else {
-            reject(new Error('No content: ' + body.substring(0, 200)));
+            reject(new Error('No content in response: ' + body.substring(0, 200)));
           }
         } catch (e) {
           reject(new Error('Parse error: ' + e.message));
@@ -42,51 +44,17 @@ const generateWithOpenRouter = (prompt, model) => {
     });
 
     req.on('error', (e) => reject(new Error('Request error: ' + e.message)));
-    req.setTimeout(45000, () => {
+    req.setTimeout(60000, () => {
       req.destroy();
-      reject(new Error('Timed out after 45s'));
+      reject(new Error('Timed out after 60s'));
     });
     req.write(data);
     req.end();
   });
 };
 
-// Try multiple free models in order until one works
-const MODELS = [
-  'meta-llama/llama-3.1-8b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
-  'google/gemma-2-9b-it:free',
-  'qwen/qwen-2-7b-instruct:free',
-];
-
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-const generateWithAI = async (prompt) => {
-  for (let modelIndex = 0; modelIndex < MODELS.length; modelIndex++) {
-    const model = MODELS[modelIndex];
-    try {
-      console.log('Trying model:', model);
-      const result = await generateWithOpenRouter(prompt, model);
-      console.log('Success with model:', model);
-      return result;
-    } catch (err) {
-      const is429 = err.message.includes('429') || err.message.includes('rate') || err.message.includes('Rate') || err.message.includes('rate-limited');
-      console.error('Model ' + model + ' failed:', err.message.substring(0, 100));
-      if (is429) {
-        console.log('Rate limited on ' + model + ' — trying next model...');
-        await sleep(2000);
-        continue;
-      }
-      // Non-rate-limit error — try next model
-      await sleep(1000);
-      continue;
-    }
-  }
-  throw new Error('All models exhausted. Please try again in a minute.');
-};
-
 const generateBlogPost = (topic, tone) => generateWithAI(
-  'Write a ' + tone + ' blog post about: ' + topic + '. Include title, intro, 3 sections with subheadings, conclusion. Use markdown. Keep it concise under 500 words.'
+  'Write a ' + tone + ' blog post about: ' + topic + '. Include title, intro, 3 sections with subheadings, conclusion. Use markdown. Keep it under 500 words.'
 );
 
 const generateLinkedInPost = (topic, tone) => generateWithAI(
@@ -98,7 +66,7 @@ const generateTwitterThread = (topic, tone) => generateWithAI(
 );
 
 const generateYouTubeScript = (topic, tone) => generateWithAI(
-  'Write a ' + tone + ' YouTube script about: ' + topic + '. Hook, intro, 3 points, outro. Keep under 400 words.'
+  'Write a ' + tone + ' YouTube video script about: ' + topic + '. Hook, intro, 3 main points, outro. Under 400 words.'
 );
 
 const generateEmailNewsletter = (topic, tone) => generateWithAI(
