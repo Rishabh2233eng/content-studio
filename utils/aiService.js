@@ -2,18 +2,60 @@ const https = require('https');
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const MODELS = [
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-r1-0528:free',
-  'google/gemma-3-27b-it:free',
-  'qwen/qwen3-8b:free',
-  'mistralai/devstral-small:free',
-];
-
-const callOpenRouter = (prompt, model) => {
+const generateWithGemini = (prompt) => {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
-      model: model,
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: 800, temperature: 0.7 }
+    });
+
+    const path = '/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=' + process.env.GEMINI_API_KEY;
+
+    const options = {
+      hostname: 'generativelanguage.googleapis.com',
+      path: path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        try {
+          console.log('Gemini status:', res.statusCode);
+          const parsed = JSON.parse(body);
+          if (parsed.error) {
+            reject(new Error('Gemini error: ' + JSON.stringify(parsed.error).substring(0, 100)));
+          } else if (parsed.candidates && parsed.candidates[0]) {
+            const text = parsed.candidates[0].content.parts[0].text;
+            resolve(text);
+          } else {
+            reject(new Error('No content from Gemini: ' + body.substring(0, 100)));
+          }
+        } catch (e) {
+          reject(new Error('Parse error: ' + e.message));
+        }
+      });
+    });
+
+    req.on('error', (e) => reject(new Error('Network error: ' + e.message)));
+    req.setTimeout(60000, () => {
+      req.destroy();
+      reject(new Error('Gemini timeout after 60s'));
+    });
+    req.write(data);
+    req.end();
+  });
+};
+
+const generateWithOpenRouter = (prompt) => {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify({
+      model: 'meta-llama/llama-3.3-70b-instruct:free',
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 800
     });
@@ -36,15 +78,14 @@ const callOpenRouter = (prompt, model) => {
       res.on('data', (chunk) => body += chunk);
       res.on('end', () => {
         try {
-          console.log('OpenRouter status:', res.statusCode, '| model:', model);
+          console.log('OpenRouter status:', res.statusCode);
           const parsed = JSON.parse(body);
           if (parsed.error) {
-            const code = parsed.error.code || res.statusCode;
-            reject(new Error(code + ':' + (parsed.error.message || '').substring(0, 80)));
+            reject(new Error('OpenRouter: ' + JSON.stringify(parsed.error).substring(0, 80)));
           } else if (parsed.choices && parsed.choices[0]) {
             resolve(parsed.choices[0].message.content);
           } else {
-            reject(new Error('No content: ' + body.substring(0, 100)));
+            reject(new Error('No content from OpenRouter'));
           }
         } catch (e) {
           reject(new Error('Parse error: ' + e.message));
@@ -52,10 +93,10 @@ const callOpenRouter = (prompt, model) => {
       });
     });
 
-    req.on('error', (e) => reject(new Error('Network: ' + e.message)));
+    req.on('error', (e) => reject(new Error('Network error: ' + e.message)));
     req.setTimeout(60000, () => {
       req.destroy();
-      reject(new Error('Timeout 60s'));
+      reject(new Error('OpenRouter timeout'));
     });
     req.write(data);
     req.end();
@@ -63,42 +104,42 @@ const callOpenRouter = (prompt, model) => {
 };
 
 const generateWithAI = async (prompt) => {
-  for (let i = 0; i < MODELS.length; i++) {
-    const model = MODELS[i];
+  // Try Gemini first — 1500 req/day free, no credits needed
+  if (process.env.GEMINI_API_KEY) {
     try {
-      console.log('Trying model:', model);
-      const result = await callOpenRouter(prompt, model);
-      console.log('Success with:', model);
+      console.log('Trying Gemini...');
+      const result = await generateWithGemini(prompt);
+      console.log('Gemini success!');
       return result;
     } catch (err) {
-      const msg = err.message;
-      console.error('Failed:', model, '-', msg.substring(0, 80));
-
-      const is429 = msg.includes('429') || msg.includes('rate') || msg.includes('Rate');
-      const is404 = msg.includes('404') || msg.includes('No endpoints');
-      const is402 = msg.includes('402') || msg.includes('credits') || msg.includes('Credits');
-
-      if (is402) {
-        console.log('Credits required for this model, trying next...');
-        await sleep(1000);
-        continue;
+      console.error('Gemini failed:', err.message.substring(0, 100));
+      if (err.message.includes('429')) {
+        console.log('Gemini rate limited, waiting 5s...');
+        await sleep(5000);
+        try {
+          const retry = await generateWithGemini(prompt);
+          console.log('Gemini retry success!');
+          return retry;
+        } catch (e) {
+          console.error('Gemini retry failed:', e.message.substring(0, 80));
+        }
       }
-      if (is429) {
-        console.log('Rate limited, waiting 8s before trying next model...');
-        await sleep(8000);
-        continue;
-      }
-      if (is404) {
-        console.log('Model not found, trying next...');
-        await sleep(500);
-        continue;
-      }
-      // Other error — try next
-      await sleep(2000);
-      continue;
     }
   }
-  throw new Error('All models failed. Please try again in a minute.');
+
+  // Fallback to OpenRouter
+  if (process.env.OPENROUTER_API_KEY) {
+    try {
+      console.log('Trying OpenRouter fallback...');
+      const result = await generateWithOpenRouter(prompt);
+      console.log('OpenRouter success!');
+      return result;
+    } catch (err) {
+      console.error('OpenRouter failed:', err.message.substring(0, 80));
+    }
+  }
+
+  throw new Error('All AI providers failed. Please try again.');
 };
 
 const generateBlogPost = (topic, tone) => generateWithAI(
