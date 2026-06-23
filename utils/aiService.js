@@ -9,7 +9,7 @@ const generateWithGemini = (prompt) => {
       generationConfig: { maxOutputTokens: 800, temperature: 0.7 }
     });
 
-    const path = '/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=' + process.env.GEMINI_API_KEY;
+    const path = '/v1beta/models/gemini-2.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY;
 
     const options = {
       hostname: 'generativelanguage.googleapis.com',
