@@ -1,62 +1,19 @@
 const https = require('https');
 
-const generateWithCloudflare = (prompt) => {
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+const MODELS = [
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'deepseek/deepseek-r1-0528:free',
+  'google/gemma-3-27b-it:free',
+  'qwen/qwen3-8b:free',
+  'mistralai/devstral-small:free',
+];
+
+const callOpenRouter = (prompt, model) => {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
-      messages: [
-        { role: 'system', content: 'You are a helpful AI content writer. Write clear, engaging content.' },
-        { role: 'user', content: prompt }
-      ],
-      max_tokens: 800
-    });
-
-    const path = '/client/v4/accounts/' + process.env.CLOUDFLARE_ACCOUNT_ID + '/ai/run/@cf/meta/llama-3.1-8b-instruct';
-
-    const options = {
-      hostname: 'api.cloudflare.com',
-      path: path,
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + process.env.CLOUDFLARE_API_TOKEN,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data)
-      }
-    };
-
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', (chunk) => body += chunk);
-      res.on('end', () => {
-        try {
-          console.log('Cloudflare status:', res.statusCode);
-          const parsed = JSON.parse(body);
-          if (!parsed.success) {
-            reject(new Error('Cloudflare error: ' + JSON.stringify(parsed.errors).substring(0, 100)));
-          } else if (parsed.result && parsed.result.response) {
-            resolve(parsed.result.response);
-          } else {
-            reject(new Error('No response from Cloudflare: ' + body.substring(0, 100)));
-          }
-        } catch (e) {
-          reject(new Error('Parse error: ' + e.message));
-        }
-      });
-    });
-
-    req.on('error', (e) => reject(new Error('Network error: ' + e.message)));
-    req.setTimeout(60000, () => {
-      req.destroy();
-      reject(new Error('Cloudflare timeout after 60s'));
-    });
-    req.write(data);
-    req.end();
-  });
-};
-
-const generateWithOpenRouter = (prompt) => {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      model: 'meta-llama/llama-3.3-70b-instruct:free',
+      model: model,
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 800
     });
@@ -79,14 +36,15 @@ const generateWithOpenRouter = (prompt) => {
       res.on('data', (chunk) => body += chunk);
       res.on('end', () => {
         try {
-          console.log('OpenRouter status:', res.statusCode);
+          console.log('OpenRouter status:', res.statusCode, '| model:', model);
           const parsed = JSON.parse(body);
           if (parsed.error) {
-            reject(new Error('OpenRouter: ' + JSON.stringify(parsed.error).substring(0, 100)));
+            const code = parsed.error.code || res.statusCode;
+            reject(new Error(code + ':' + (parsed.error.message || '').substring(0, 80)));
           } else if (parsed.choices && parsed.choices[0]) {
             resolve(parsed.choices[0].message.content);
           } else {
-            reject(new Error('No content from OpenRouter'));
+            reject(new Error('No content: ' + body.substring(0, 100)));
           }
         } catch (e) {
           reject(new Error('Parse error: ' + e.message));
@@ -94,10 +52,10 @@ const generateWithOpenRouter = (prompt) => {
       });
     });
 
-    req.on('error', (e) => reject(new Error('Network error: ' + e.message)));
+    req.on('error', (e) => reject(new Error('Network: ' + e.message)));
     req.setTimeout(60000, () => {
       req.destroy();
-      reject(new Error('OpenRouter timeout'));
+      reject(new Error('Timeout 60s'));
     });
     req.write(data);
     req.end();
@@ -105,31 +63,42 @@ const generateWithOpenRouter = (prompt) => {
 };
 
 const generateWithAI = async (prompt) => {
-  // Try Cloudflare first — truly free, no credits needed
-  if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) {
+  for (let i = 0; i < MODELS.length; i++) {
+    const model = MODELS[i];
     try {
-      console.log('Trying Cloudflare...');
-      const result = await generateWithCloudflare(prompt);
-      console.log('Cloudflare success');
+      console.log('Trying model:', model);
+      const result = await callOpenRouter(prompt, model);
+      console.log('Success with:', model);
       return result;
     } catch (err) {
-      console.error('Cloudflare failed:', err.message.substring(0, 100));
+      const msg = err.message;
+      console.error('Failed:', model, '-', msg.substring(0, 80));
+
+      const is429 = msg.includes('429') || msg.includes('rate') || msg.includes('Rate');
+      const is404 = msg.includes('404') || msg.includes('No endpoints');
+      const is402 = msg.includes('402') || msg.includes('credits') || msg.includes('Credits');
+
+      if (is402) {
+        console.log('Credits required for this model, trying next...');
+        await sleep(1000);
+        continue;
+      }
+      if (is429) {
+        console.log('Rate limited, waiting 8s before trying next model...');
+        await sleep(8000);
+        continue;
+      }
+      if (is404) {
+        console.log('Model not found, trying next...');
+        await sleep(500);
+        continue;
+      }
+      // Other error — try next
+      await sleep(2000);
+      continue;
     }
   }
-
-  // Fallback to OpenRouter
-  if (process.env.OPENROUTER_API_KEY) {
-    try {
-      console.log('Trying OpenRouter fallback...');
-      const result = await generateWithOpenRouter(prompt);
-      console.log('OpenRouter success');
-      return result;
-    } catch (err) {
-      console.error('OpenRouter failed:', err.message.substring(0, 100));
-    }
-  }
-
-  throw new Error('All AI providers failed. Please try again.');
+  throw new Error('All models failed. Please try again in a minute.');
 };
 
 const generateBlogPost = (topic, tone) => generateWithAI(
@@ -141,15 +110,15 @@ const generateLinkedInPost = (topic, tone) => generateWithAI(
 );
 
 const generateTwitterThread = (topic, tone) => generateWithAI(
-  'Write a ' + tone + ' Twitter thread about: ' + topic + '. 5 tweets. Format: 1/ text 2/ text etc. Max 240 chars each.'
+  'Write a ' + tone + ' Twitter thread about: ' + topic + '. 5 tweets numbered 1/ through 5/. Max 240 chars each.'
 );
 
 const generateYouTubeScript = (topic, tone) => generateWithAI(
-  'Write a ' + tone + ' YouTube script about: ' + topic + '. Hook, intro, 3 main points, outro. Under 400 words.'
+  'Write a ' + tone + ' YouTube video script about: ' + topic + '. Hook, intro, 3 main points, outro. Under 400 words.'
 );
 
 const generateEmailNewsletter = (topic, tone) => generateWithAI(
-  'Write a ' + tone + ' email newsletter about: ' + topic + '. Subject line, preview text, greeting, 2-3 sections, call to action. Under 300 words.'
+  'Write a ' + tone + ' email newsletter about: ' + topic + '. Subject line, preview text, greeting, 2 sections, call to action. Under 300 words.'
 );
 
 module.exports = {
