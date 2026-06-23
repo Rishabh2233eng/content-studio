@@ -9,7 +9,7 @@ const generateWithGemini = (prompt) => {
       generationConfig: { maxOutputTokens: 800, temperature: 0.7 }
     });
 
-    const path = '/v1beta/models/gemini-2.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY;
+    const path = '/v1beta/models/gemini-1.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY;
 
     const options = {
       hostname: 'generativelanguage.googleapis.com',
@@ -29,12 +29,12 @@ const generateWithGemini = (prompt) => {
           console.log('Gemini status:', res.statusCode);
           const parsed = JSON.parse(body);
           if (parsed.error) {
-            reject(new Error('Gemini error: ' + JSON.stringify(parsed.error).substring(0, 100)));
+            reject(new Error('Gemini error: ' + JSON.stringify(parsed.error).substring(0, 150)));
           } else if (parsed.candidates && parsed.candidates[0]) {
             const text = parsed.candidates[0].content.parts[0].text;
             resolve(text);
           } else {
-            reject(new Error('No content from Gemini: ' + body.substring(0, 100)));
+            reject(new Error('No content from Gemini: ' + body.substring(0, 150)));
           }
         } catch (e) {
           reject(new Error('Parse error: ' + e.message));
@@ -104,7 +104,6 @@ const generateWithOpenRouter = (prompt) => {
 };
 
 const generateWithAI = async (prompt) => {
-  // Try Gemini first — 1500 req/day free, no credits needed
   if (process.env.GEMINI_API_KEY) {
     try {
       console.log('Trying Gemini...');
@@ -112,7 +111,7 @@ const generateWithAI = async (prompt) => {
       console.log('Gemini success!');
       return result;
     } catch (err) {
-      console.error('Gemini failed:', err.message.substring(0, 100));
+      console.error('Gemini failed:', err.message.substring(0, 150));
       if (err.message.includes('429')) {
         console.log('Gemini rate limited, waiting 5s...');
         await sleep(5000);
@@ -127,7 +126,6 @@ const generateWithAI = async (prompt) => {
     }
   }
 
-  // Fallback to OpenRouter
   if (process.env.OPENROUTER_API_KEY) {
     try {
       console.log('Trying OpenRouter fallback...');
