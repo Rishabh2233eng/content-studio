@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '1d' });
 };
 
 const validateEmail = (email) => {
@@ -22,15 +22,12 @@ const register = async (req, res) => {
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'All fields are required' });
     }
-
     if (name.length < 2 || name.length > 50) {
       return res.status(400).json({ success: false, message: 'Name must be between 2 and 50 characters' });
     }
-
     if (!validateEmail(email)) {
       return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
     }
-
     if (!validatePassword(password)) {
       return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
     }
@@ -50,6 +47,8 @@ const register = async (req, res) => {
       credits: 5,
       plan: 'free'
     });
+
+    console.log('New user registered:', user.email, '| IP:', req.ip);
 
     const token = generateToken(user._id);
 
@@ -80,22 +79,24 @@ const login = async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
-
     if (!validateEmail(email)) {
       return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
     }
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
 
-    // Generic message to prevent user enumeration
     if (!user) {
+      console.warn('Failed login - user not found:', email, '| IP:', req.ip);
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
+      console.warn('Failed login - wrong password:', email, '| IP:', req.ip);
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
+
+    console.log('Successful login:', user.email, '| IP:', req.ip);
 
     const token = generateToken(user._id);
 
