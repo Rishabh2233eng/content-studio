@@ -2,73 +2,25 @@ const https = require('https');
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const generateWithGemini = (prompt) => {
+const generateWithCloudflare = (prompt) => {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 800, temperature: 0.7 }
-    });
-
-    const path = '/v1beta/models/gemini-2.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY;
-
-    const options = {
-      hostname: 'generativelanguage.googleapis.com',
-      path: path,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data)
-      }
-    };
-
-    const req = https.request(options, (res) => {
-      let body = '';
-      res.on('data', (chunk) => body += chunk);
-      res.on('end', () => {
-        try {
-          console.log('Gemini status:', res.statusCode);
-          const parsed = JSON.parse(body);
-          if (parsed.error) {
-            reject(new Error('Gemini error: ' + JSON.stringify(parsed.error).substring(0, 150)));
-          } else if (parsed.candidates && parsed.candidates[0]) {
-            const text = parsed.candidates[0].content.parts[0].text;
-            resolve(text);
-          } else {
-            reject(new Error('No content from Gemini: ' + body.substring(0, 150)));
-          }
-        } catch (e) {
-          reject(new Error('Parse error: ' + e.message));
-        }
-      });
-    });
-
-    req.on('error', (e) => reject(new Error('Network error: ' + e.message)));
-    req.setTimeout(60000, () => {
-      req.destroy();
-      reject(new Error('Gemini timeout after 60s'));
-    });
-    req.write(data);
-    req.end();
-  });
-};
-
-const generateWithOpenRouter = (prompt) => {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      model: 'meta-llama/llama-3.3-70b-instruct:free',
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+        { role: 'system', content: 'You are a helpful AI content writer. Write clear, engaging, well-structured content.' },
+        { role: 'user', content: prompt }
+      ],
       max_tokens: 800
     });
 
+    const path = '/client/v4/accounts/' + process.env.CLOUDFLARE_ACCOUNT_ID + '/ai/run/@cf/meta/llama-3.1-8b-instruct';
+
     const options = {
-      hostname: 'openrouter.ai',
-      path: '/api/v1/chat/completions',
+      hostname: 'api.cloudflare.com',
+      path: path,
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + process.env.OPENROUTER_API_KEY,
+        'Authorization': 'Bearer ' + process.env.CLOUDFLARE_API_TOKEN,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://content-studio-hbfr.onrender.com',
-        'X-Title': 'ContentStudio',
         'Content-Length': Buffer.byteLength(data)
       }
     };
@@ -78,14 +30,14 @@ const generateWithOpenRouter = (prompt) => {
       res.on('data', (chunk) => body += chunk);
       res.on('end', () => {
         try {
-          console.log('OpenRouter status:', res.statusCode);
+          console.log('Cloudflare status:', res.statusCode);
           const parsed = JSON.parse(body);
-          if (parsed.error) {
-            reject(new Error('OpenRouter: ' + JSON.stringify(parsed.error).substring(0, 80)));
-          } else if (parsed.choices && parsed.choices[0]) {
-            resolve(parsed.choices[0].message.content);
+          if (parsed.success === false) {
+            reject(new Error('Cloudflare error: ' + JSON.stringify(parsed.errors).substring(0, 150)));
+          } else if (parsed.result && parsed.result.response) {
+            resolve(parsed.result.response);
           } else {
-            reject(new Error('No content from OpenRouter'));
+            reject(new Error('No response from Cloudflare: ' + body.substring(0, 150)));
           }
         } catch (e) {
           reject(new Error('Parse error: ' + e.message));
@@ -96,7 +48,7 @@ const generateWithOpenRouter = (prompt) => {
     req.on('error', (e) => reject(new Error('Network error: ' + e.message)));
     req.setTimeout(60000, () => {
       req.destroy();
-      reject(new Error('OpenRouter timeout'));
+      reject(new Error('Cloudflare timeout after 60s'));
     });
     req.write(data);
     req.end();
@@ -104,40 +56,28 @@ const generateWithOpenRouter = (prompt) => {
 };
 
 const generateWithAI = async (prompt) => {
-  if (process.env.GEMINI_API_KEY) {
+  if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) {
     try {
-      console.log('Trying Gemini...');
-      const result = await generateWithGemini(prompt);
-      console.log('Gemini success!');
+      console.log('Trying Cloudflare...');
+      const result = await generateWithCloudflare(prompt);
+      console.log('Cloudflare success!');
       return result;
     } catch (err) {
-      console.error('Gemini failed:', err.message.substring(0, 150));
+      console.error('Cloudflare failed:', err.message.substring(0, 150));
       if (err.message.includes('429')) {
-        console.log('Gemini rate limited, waiting 5s...');
+        console.log('Rate limited, waiting 5s...');
         await sleep(5000);
         try {
-          const retry = await generateWithGemini(prompt);
-          console.log('Gemini retry success!');
+          const retry = await generateWithCloudflare(prompt);
+          console.log('Cloudflare retry success!');
           return retry;
         } catch (e) {
-          console.error('Gemini retry failed:', e.message.substring(0, 80));
+          console.error('Retry failed:', e.message.substring(0, 80));
         }
       }
     }
   }
-
-  if (process.env.OPENROUTER_API_KEY) {
-    try {
-      console.log('Trying OpenRouter fallback...');
-      const result = await generateWithOpenRouter(prompt);
-      console.log('OpenRouter success!');
-      return result;
-    } catch (err) {
-      console.error('OpenRouter failed:', err.message.substring(0, 80));
-    }
-  }
-
-  throw new Error('All AI providers failed. Please try again.');
+  throw new Error('Generation failed. Please try again.');
 };
 
 const generateBlogPost = (topic, tone) => generateWithAI(
